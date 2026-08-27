@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0">
+
+<title>ESP32 Luftmesser</title>
+
+<style>
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+
+  margin: 0;
+
+  min-height: 100vh;
+
+  font-family: Arial, sans-serif;
+
+  background:
+    linear-gradient(
+      135deg,
+      #07111f,
+      #102d3d
+    );
+
+  color: white;
+
+  display: flex;
+
+  justify-content: center;
+
+  align-items: center;
+
+}
+
+.app {
+
+  width: 92%;
+
+  max-width: 450px;
+
+  text-align: center;
+
+  padding: 25px 0;
+
+}
+
+h1 {
+
+  font-size: 30px;
+
+  margin-bottom: 10px;
+
+}
+
+.air {
+
+  font-size: 75px;
+
+  animation: schweben 2s ease-in-out infinite;
+
+}
+
+@keyframes schweben {
+
+  0%, 100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-12px);
+  }
+
+}
+
+.status {
+
+  margin: 20px 0;
+
+  padding: 12px;
+
+  border-radius: 30px;
+
+  background:
+    rgba(0,255,150,0.12);
+
+}
+
+.dot {
+
+  display: inline-block;
+
+  width: 10px;
+
+  height: 10px;
+
+  background: #35ff9b;
+
+  border-radius: 50%;
+
+  margin-right: 8px;
+
+  animation: blinken 1.5s infinite;
+
+}
+
+@keyframes blinken {
+
+  50% {
+    opacity: 0.2;
+  }
+
+}
+
+.cards {
+
+  display: flex;
+
+  gap: 12px;
+
+}
+
+.card {
+
+  flex: 1;
+
+  background:
+    rgba(255,255,255,0.09);
+
+  border-radius: 20px;
+
+  padding: 22px 10px;
+
+  backdrop-filter: blur(10px);
+
+}
+
+.icon {
+
+  font-size: 32px;
+
+}
+
+.label {
+
+  opacity: 0.7;
+
+  margin-top: 8px;
+
+}
+
+.value {
+
+  font-size: 32px;
+
+  font-weight: bold;
+
+  margin-top: 8px;
+
+}
+
+.unit {
+
+  font-size: 17px;
+
+  opacity: 0.7;
+
+}
+
+.chart {
+
+  margin-top: 20px;
+
+  background:
+    rgba(255,255,255,0.09);
+
+  border-radius: 20px;
+
+  padding: 20px;
+
+}
+
+.chart h2 {
+
+  margin-top: 0;
+
+  font-size: 20px;
+
+}
+
+canvas {
+
+  width: 100%;
+
+  height: 160px;
+
+}
+
+.info {
+
+  opacity: 0.6;
+
+  margin-top: 18px;
+
+  font-size: 14px;
+
+}
+
+</style>
+
+</head>
+
+
+<body>
+
+<div class="app">
+
+<h1>🌬️ ESP32 Luftmesser</h1>
+
+<div class="air">
+🌬️
+</div>
+
+<div class="status" id="status">
+
+<span class="dot"></span>
+
+Verbinde...
+
+</div>
+
+
+<div class="cards">
+
+
+<div class="card">
+
+<div class="icon">
+🌡️
+</div>
+
+<div class="label">
+Temperatur
+</div>
+
+<div class="value">
+
+<span id="temp">
+--
+</span>
+
+<span class="unit">
+°C
+</span>
+
+</div>
+
+</div>
+
+
+<div class="card">
+
+<div class="icon">
+💧
+</div>
+
+<div class="label">
+Feuchtigkeit
+</div>
+
+<div class="value">
+
+<span id="feuchte">
+--
+</span>
+
+<span class="unit">
+%
+</span>
+
+</div>
+
+</div>
+
+
+</div>
+
+
+<div class="chart">
+
+<h2>
+📈 Verlauf
+</h2>
+
+<canvas id="chart"></canvas>
+
+</div>
+
+
+<div class="info">
+
+Letzte Messung:
+<span id="zeit">
+--
+</span>
+
+<br>
+
+Aktualisierung alle 60 Sekunden
+
+</div>
+
+</div>
+
+
+<script>
+
+/* =========================================
+   THINGSPEAK EINSTELLUNGEN
+   ========================================= */
+
+const CHANNEL_ID = "3472277";
+
+const READ_API_KEY =
+"ZNBOSUFG026U0NZM";
+
+
+/* =========================================
+   DATEN
+   ========================================= */
+
+let temperaturDaten = [];
+
+let feuchteDaten = [];
+
+
+/* =========================================
+   THINGSPEAK ABFRAGEN
+   ========================================= */
+
+async function aktualisieren() {
+
+  try {
+
+    const url =
+      "https://api.thingspeak.com/channels/"
+      + CHANNEL_ID
+      + "/feeds.json?api_key="
+      + READ_API_KEY
+      + "&results=20";
+
+
+    const response =
+      await fetch(url);
+
+
+    if (!response.ok) {
+
+      throw new Error(
+        "ThingSpeak Fehler"
+      );
+
+    }
+
+
+    const data =
+      await response.json();
+
+
+    if (
+      !data.feeds ||
+      data.feeds.length === 0
+    ) {
+
+      throw new Error(
+        "Keine Daten"
+      );
+
+    }
+
+
+    const letzter =
+      data.feeds[
+        data.feeds.length - 1
+      ];
+
+
+    const temperatur =
+      parseFloat(
+        letzter.field1
+      );
+
+
+    const feuchte =
+      parseFloat(
+        letzter.field2
+      );
+
+
+    if (
+      isNaN(temperatur) ||
+      isNaN(feuchte)
+    ) {
+
+      throw new Error(
+        "Ungültige Messwerte"
+      );
+
+    }
+
+
+    /* Werte anzeigen */
+
+    document.getElementById(
+      "temp"
+    ).textContent =
+      temperatur.toFixed(1);
+
+
+    document.getElementById(
+      "feuchte"
+    ).textContent =
+      feuchte.toFixed(1);
+
+
+    /* Zeitpunkt */
+
+    const zeit =
+      new Date(
+        letzter.created_at
+      );
+
+
+    document.getElementById(
+      "zeit"
+    ).textContent =
+      zeit.toLocaleTimeString(
+        "de-DE",
+        {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit"
+        }
+      );
+
+
+    /* Status */
+
+    document.getElementById(
+      "status"
+    ).innerHTML =
+      '<span class="dot"></span>' +
+      'ESP32 online';
+
+
+    /* Verlauf */
+
+    temperaturDaten =
+      data.feeds
+        .map(x =>
+          parseFloat(x.field1)
+        )
+        .filter(x =>
+          !isNaN(x)
+        );
+
+
+    feuchteDaten =
+      data.feeds
+        .map(x =>
+          parseFloat(x.field2)
+        )
+        .filter(x =>
+          !isNaN(x)
+        );
+
+
+    zeichneDiagramm();
+
+  }
+
+  catch (error) {
+
+    console.log(error);
+
+    document.getElementById(
+      "status"
+    ).innerHTML =
+      "🔴 Keine Verbindung";
+
+  }
+
+}
+
+
+/* =========================================
+   DIAGRAMM
+   ========================================= */
+
+function zeichneDiagramm() {
+
+  const canvas =
+    document.getElementById(
+      "chart"
+    );
+
+  const ctx =
+    canvas.getContext("2d");
+
+
+  canvas.width =
+    canvas.clientWidth * 2;
+
+  canvas.height =
+    canvas.clientHeight * 2;
+
+
+  ctx.scale(2, 2);
+
+
+  const width =
+    canvas.clientWidth;
+
+  const height =
+    canvas.clientHeight;
+
+
+  ctx.clearRect(
+    0,
+    0,
+    width,
+    height
+  );
+
+
+  if (
+    temperaturDaten.length < 2
+  ) {
+
+    return;
+
+  }
+
+
+  const min =
+    Math.min(
+      ...temperaturDaten
+    ) - 1;
+
+
+  const max =
+    Math.max(
+      ...temperaturDaten
+    ) + 1;
+
+
+  ctx.beginPath();
+
+
+  temperaturDaten.forEach(
+    (wert, index) => {
+
+      const x =
+        index /
+        (temperaturDaten.length - 1)
+        * width;
+
+
+      const y =
+        height -
+        (
+          (wert - min) /
+          (max - min)
+        )
+        * height;
+
+
+      if (index === 0) {
+
+        ctx.moveTo(
+          x,
+          y
+        );
+
+      } else {
+
+        ctx.lineTo(
+          x,
+          y
+        );
+
+      }
+
+    }
+  );
+
+
+  ctx.strokeStyle =
+    "white";
+
+  ctx.lineWidth =
+    3;
+
+  ctx.stroke();
+
+}
+
+
+/* =========================================
+   START
+   ========================================= */
+
+aktualisieren();
+
+
+/* Alle 60 Sekunden */
+
+setInterval(
+  aktualisieren,
+  60000
+);
+
+</script>
+
+</body>
+
+</html>
